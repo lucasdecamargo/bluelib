@@ -7,7 +7,7 @@ class Executor:
 	with your own instantiation of Executor, i.e. execute =
 	Executor(nthreads=4)"""
 
-	def __init__(self, loop=None, nthreads=1):
+	def __init__(self, loop=None, nthreads=None):
 		from concurrent.futures import ThreadPoolExecutor
 		self._ex = ThreadPoolExecutor(nthreads)
 		if loop is None:

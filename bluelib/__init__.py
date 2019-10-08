@@ -15,4 +15,5 @@ if platform.system() == "Windows":
 
 
 if platform.system() == "Linux":
-	from bleak.linux.scan import scan
+	from bluelib.linux.scan import scan
+	from bluelib.linux.client import BleClient

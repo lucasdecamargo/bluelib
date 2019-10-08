@@ -2,12 +2,14 @@ import asyncio
 import logging
 
 from executor import Executor
-from bluepy.btle import Peripheral, UUID
+from bluepy.btle import Peripheral, UUID, DefaultDelegate
 from bluelib.client import BaseBleClient
 from time import perf_counter
 from typing import Callable, Any
+from asyncio.events import AbstractEventLoop
+from sys import _getframe
 
-currentFuncName = lambda n=0: sys._getframe(n + 1).f_code.co_name
+currentFuncName = lambda n=0: _getframe(n + 1).f_code.co_name
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +45,7 @@ class CallbackList(object):
 
 
 
-class BleLibDelegate(DefaultDelegate):
+class MyDelegate(DefaultDelegate):
 	def __init__(self):
 		DefaultDelegate.__init__(self)
 		self.callbacks = CallbackList()
@@ -61,7 +63,7 @@ class BleClient(BaseBleClient):
 		self.iface = 0
 		self._execute = Executor(loop=loop)
 		self._characteristics = None
-		self._delegate = BleLibDelegate()
+		self._delegate = MyDelegate()
 
 
 # %% Connectivity methods
@@ -80,6 +82,8 @@ class BleClient(BaseBleClient):
 				if await self.is_connected():
 					logger.debug(f"[{currentFuncName()}] device is already connected.")
 					return True
+				else:
+					logger.debug(f"[{currentFuncName()}] device might has lost connection.")
 			except Exception as e:
 				self.logger.error(f"[{currentFuncName()}] received exception while checking connection state: " + str(e))
 
@@ -97,6 +101,7 @@ class BleClient(BaseBleClient):
 			try:
 				t1 = perf_counter()
 				self.client = await asyncio.wait_for(self._execute(Peripheral, self.address, "public", iface=iface), self.timeout)
+				self._characteristics = None
 				t2 = perf_counter() - t1
 
 				self.client.withDelegate(self._delegate)
@@ -122,10 +127,17 @@ class BleClient(BaseBleClient):
 			Boolean representing connection status.
 
 		"""
-
 		if self.client is not None:
+			try:
+				await self._execute(self.client.disconnect)
+			except Exception as e:
+				logger.debug(f"[{currentFuncName()}] received exception: {str(e)}")
+
 			del self.client
 			self.client = None
+			#self._characteristics = None
+
+		logger.debug(f"[{currentFuncName()}] disconnected.")
 
 		return True
 
@@ -141,7 +153,7 @@ class BleClient(BaseBleClient):
 
 		if self.client is not None:
 			try:
-				state = await asyncio.wair_for(self._execute(self.client.getState()), self.timeout)
+				state = await asyncio.wait_for(self._execute(self.client.getState), self.timeout)
 				return(state == 'conn')
 			except Exception as e:
 				logger.error(f"[{currentFuncName()}] received exception: {str(e)}")
@@ -176,7 +188,7 @@ class BleClient(BaseBleClient):
 
 		if self.client is not None:
 			await self.__check_connection()
-			services = await self._execute(self.client.getServices())
+			services = await self._execute(self.client.getServices)
 			return [str(s.uuid) for s in services]
 
 		else:
@@ -187,7 +199,7 @@ class BleClient(BaseBleClient):
 
 	async def _get_char(self, uuid: str):
 		if self._characteristics is None:
-			self._characteristics = await self._execute(self.client.getCharacteristics())
+			self._characteristics = await self._execute(self.client.getCharacteristics)
 
 		_uuid = UUID(uuid)
 
@@ -215,6 +227,10 @@ class BleClient(BaseBleClient):
 			await self.__check_connection()
 
 			char = await self._get_char(_uuid)
+
+			if char is None:
+				raise Exception("Characteristic was not found.")
+
 			data = await asyncio.wait_for(self._execute(char.read), self.timeout)
 
 			if keepConnection is None:
@@ -266,7 +282,7 @@ class BleClient(BaseBleClient):
 
 
 	async def write_gatt_char(
-		self, _uuid: str, data: bytearray, response: bool = False, **kwargs
+		self, _uuid: str, data: bytearray, **kwargs
 	) -> Any:
 		"""Perform a write operation on the specified GATT characteristic.
 
@@ -280,11 +296,17 @@ class BleClient(BaseBleClient):
 
 		"""
 		keepConnection = kwargs.get('keepConnection', None)
+		response = True
 
 		try:
 			await self.__check_connection()
 
 			char = await self._get_char(_uuid)
+
+			if char is None:
+				raise Exception("Characteristic was not found.")
+
+			data = bytes(data)
 			ret = await asyncio.wait_for(self._execute(char.write, data, response), self.timeout)
 
 			if keepConnection is None:
@@ -359,6 +381,10 @@ class BleClient(BaseBleClient):
 		try:
 			await self.__check_connection()
 			char = await self._get_char(_uuid)
+
+			if char is None:
+				raise Exception("Characteristic was not found.")
+
 			descriptors = await asyncio.wait_for(self._execute(char.getDescriptors), self.timeout)
 
 			cccd = None
@@ -372,7 +398,8 @@ class BleClient(BaseBleClient):
 
 			self._delegate.callbacks.add(char.getHandle(), callback)
 
-			resp = await asyncio.wait_for(self._execute(cccd.write, CCCD_NOTIFY_VAL, withReponse=True))
+			await asyncio.wait_for(self._execute(cccd.write, CCCD_NOTIFY_VAL, withResponse=True), self.timeout)
+			resp = await asyncio.wait_for(self._execute(cccd.read), self.timeout)
 
 			logger.debug(f"[{currentFuncName(0)}] started notify on characteristic {_uuid}. Response: {str(resp)}")
 
@@ -392,6 +419,10 @@ class BleClient(BaseBleClient):
 		try:
 			await self.__check_connection()
 			char = await self._get_char(_uuid)
+
+			if char is None:
+				raise Exception("Characteristic was not found.")
+
 			descriptors = await asyncio.wait_for(self._execute(char.getDescriptors), self.timeout)
 
 			cccd = None
@@ -405,7 +436,8 @@ class BleClient(BaseBleClient):
 
 			self._delegate.callbacks.remove(char.getHandle())
 
-			resp = await asyncio.wait_for(self._execute(cccd.write, CCCD_CLEAR, withReponse=True))
+			await asyncio.wait_for(self._execute(cccd.write, CCCD_CLEAR, withResponse=True), self.timeout)
+			resp = await asyncio.wait_for(self._execute(cccd.read), self.timeout)
 
 			if keepConnection is None:
 				if self.defaultKeepConnection is False:
