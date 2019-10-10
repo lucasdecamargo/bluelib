@@ -1,7 +1,10 @@
 from sensorlib.blesensor.blesensorbase import BleSensorBase
 from sensorlib.blesensor.blesensorbase import currentFuncName
-from numpy import uint8
+#from numpy import uint8
 import asyncio
+
+def uint8(val):
+	return val.to_bytes(1,byteorder='little', signed=False)
 
 class GenericSensor(BleSensorBase):
 
@@ -135,8 +138,7 @@ class GenericSensor(BleSensorBase):
 		try:
 			assert (advMode >= self.ADV_MODE_1 and advMode <= self.ADV_MODE_4), ("Advertisement Mode has to be between 1 and 4")
 
-			data = bytearray([0])
-			data[0] = uint8(advMode)
+			data = bytearray(uint8(advMode))
 
 			await self.client.write_gatt_char(GenericSensor.GEN_SENS_ADV_MODE_CHAR_UUID, data, **kwargs)
 
@@ -201,9 +203,7 @@ class GenericSensor(BleSensorBase):
 			assert (advScan >= 1 and advScan <= 9), ("Parameter \'advScan\' has to be between 1 and 9")
 			assert (conn >= 1 and conn <= 9), ("Parameter \'conn\' has to be between 1 and 9")
 
-			data = bytearray([0,0])
-			data[0] = uint8(advScan)
-			data[1] = uint8(conn)
+			data = bytearray(uint8(advScan), uint8(conn))
 
 			self.client.write_gatt_char(GenericSensor.GEN_SENS_TX_PWR_LVL_CHAR_UUID, data, **kwargs)
 
